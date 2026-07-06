@@ -1,0 +1,6 @@
+{
+  "name": "TradeOptimize",
+  "description": "Real-time exchange rate comparison between Binance P2P and SaldoAR to optimize financial transactions.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
