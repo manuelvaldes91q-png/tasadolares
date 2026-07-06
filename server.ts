@@ -14,7 +14,7 @@ async function startServer() {
   // API route for getting rates
   app.get("/api/rates", async (req, res) => {
     try {
-      // Fetch Binance P2P Rate
+      // Fetch Binance P2P Rate (USDT -> VES)
       const binancePayload = {
         page: 1,
         rows: 5,
@@ -33,6 +33,26 @@ async function startServer() {
       });
       const binanceData = await binanceRes.json();
       const binanceRate = parseFloat(binanceData.data?.[0]?.adv?.price || "0");
+
+      // Fetch Binance P2P Rate (USD Zelle -> USDT)
+      const binanceZellePayload = {
+        page: 1,
+        rows: 5,
+        payTypes: ["Zelle"],
+        countries: [],
+        publisherType: null,
+        asset: "USDT",
+        fiat: "USD",
+        tradeType: "BUY"
+      };
+
+      const binanceZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(binanceZellePayload)
+      });
+      const binanceZelleData = await binanceZelleRes.json();
+      const binanceUsdZelleRate = parseFloat(binanceZelleData.data?.[0]?.adv?.price || "1");
 
       // Fetch SaldoAR Rate
       const saldoRes = await fetch("https://api.saldo.com.ar/v3/systems/zelle/rates", {
@@ -88,6 +108,8 @@ async function startServer() {
 
       res.json({
         binanceRate,
+        binanceUsdZelleRate,
+        binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceRate : 0,
         saldoRate,
         bcvUsdRate: bcvRates.usd,
         bcvEurRate: bcvRates.eur,
