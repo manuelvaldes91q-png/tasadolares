@@ -1,6 +1,6 @@
 {
   "name": "TradeOptimize",
-  "description": "Real-time exchange rate comparison between Binance P2P and SaldoAR to optimize financial transactions.",
+  "description": "Comparación en tiempo real de tasas de cambio entre Binance P2P y SaldoAR para optimizar transacciones de dólares a bolívares (VES).",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

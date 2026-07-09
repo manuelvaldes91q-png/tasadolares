@@ -14,64 +14,171 @@ async function startServer() {
   // API route for getting rates
   app.get("/api/rates", async (req, res) => {
     try {
-      // Fetch Binance P2P Rate (USDT -> VES)
-      const binancePayload = {
-        page: 1,
-        rows: 5,
-        payTypes: [],
-        countries: [],
-        publisherType: null,
-        asset: "USDT",
-        fiat: "VES",
-        tradeType: "SELL"
-      };
+      const amount = parseFloat(req.query.amount as string) || 100;
 
-      const binanceRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(binancePayload)
-      });
-      const binanceData = await binanceRes.json();
-      const binanceRate = parseFloat(binanceData.data?.[0]?.adv?.price || "0");
+      // Wrap in try-catch to avoid complete failure if Binance blocks/throttles
+      let baselineRate = 40.0; // Sensible default fallback
+      let binanceUsdZelleRate = 1.03; // Sensible default fallback
 
-      // Fetch Binance P2P Rate (USD Zelle -> USDT)
-      const binanceZellePayload = {
-        page: 1,
-        rows: 5,
-        payTypes: ["Zelle"],
-        countries: [],
-        publisherType: null,
-        asset: "USDT",
-        fiat: "USD",
-        tradeType: "BUY"
-      };
+      try {
+        const baselinePayload = {
+          page: 1,
+          rows: 5,
+          payTypes: [],
+          countries: [],
+          publisherType: null,
+          asset: "USDT",
+          fiat: "VES",
+          tradeType: "SELL"
+        };
 
-      const binanceZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(binanceZellePayload)
-      });
-      const binanceZelleData = await binanceZelleRes.json();
-      const binanceUsdZelleRate = parseFloat(binanceZelleData.data?.[0]?.adv?.price || "1");
+        const [baselineRes, binanceZelleRes] = await Promise.all([
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(baselinePayload),
+            signal: AbortSignal.timeout(4000)
+          }),
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: 1,
+              rows: 5,
+              payTypes: ["Zelle"],
+              countries: [],
+              publisherType: null,
+              asset: "USDT",
+              fiat: "USD",
+              tradeType: "BUY",
+              transAmount: amount.toString()
+            }),
+            signal: AbortSignal.timeout(4000)
+          })
+        ]);
 
-      // Fetch SaldoAR Rate
-      const saldoRes = await fetch("https://api.saldo.com.ar/v3/systems/zelle/rates", {
-        headers: { "Accept": "application/json" }
-      });
-      const saldoData = await saldoRes.json();
-      
-      const rateObj = saldoData.data?.find((r: any) => r.attributes?.system_id === 'banco_ves');
-      const saldoPrice = rateObj?.attributes?.price;
-      
-      let saldoRate = 0;
-      if (saldoPrice) {
-        // Price is in Zelle -> VES inverse format (e.g., 0.001417)
-        // Which means 1 VES = 0.001417 Zelle. 
-        // We want VES per 1 Zelle (1 / price)
-        saldoRate = 1 / parseFloat(saldoPrice);
+        if (baselineRes.ok && binanceZelleRes.ok) {
+          const [baselineData, binanceZelleData] = await Promise.all([
+            baselineRes.json(),
+            binanceZelleRes.json()
+          ]);
+
+          const parsedBaseline = parseFloat(baselineData.data?.[0]?.adv?.price || "0");
+          if (parsedBaseline > 0) baselineRate = parsedBaseline;
+
+          const parsedZelle = parseFloat(binanceZelleData.data?.[0]?.adv?.price || "0");
+          if (parsedZelle > 0) {
+            binanceUsdZelleRate = parsedZelle;
+          } else {
+            // Fallback if no ads match the USD transAmount limit
+            const fallbackZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                page: 1,
+                rows: 5,
+                payTypes: ["Zelle"],
+                countries: [],
+                publisherType: null,
+                asset: "USDT",
+                fiat: "USD",
+                tradeType: "BUY"
+              }),
+              signal: AbortSignal.timeout(4000)
+            });
+            if (fallbackZelleRes.ok) {
+              const fallbackZelleData = await fallbackZelleRes.json();
+              const parsedFallback = parseFloat(fallbackZelleData.data?.[0]?.adv?.price || "0");
+              if (parsedFallback > 0) binanceUsdZelleRate = parsedFallback;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching baseline Binance rates:", err);
       }
 
-      // Fetch BCV Rates
+      // Step 2: Calculate target VES amounts for the refined queries
+      const usdtZelleAmount = amount / (binanceUsdZelleRate || 1);
+      const vesZelleAmount = usdtZelleAmount * (baselineRate || 40);
+      const vesUsdtAmount = amount * (baselineRate || 40);
+
+      let binanceZelleToVesRate = baselineRate;
+      let binanceRate = baselineRate;
+
+      try {
+        // Step 3: Fetch refined USDT -> VES rates for both paths using calculated VES amounts
+        const [refinedZelleToVesRes, refinedUsdtToVesRes] = await Promise.all([
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: 1,
+              rows: 5,
+              payTypes: [],
+              countries: [],
+              publisherType: null,
+              asset: "USDT",
+              fiat: "VES",
+              tradeType: "SELL",
+              transAmount: Math.round(vesZelleAmount).toString()
+            }),
+            signal: AbortSignal.timeout(4000)
+          }),
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: 1,
+              rows: 5,
+              payTypes: [],
+              countries: [],
+              publisherType: null,
+              asset: "USDT",
+              fiat: "VES",
+              tradeType: "SELL",
+              transAmount: Math.round(vesUsdtAmount).toString()
+            }),
+            signal: AbortSignal.timeout(4000)
+          })
+        ]);
+
+        if (refinedZelleToVesRes.ok && refinedUsdtToVesRes.ok) {
+          const [refinedZelleToVesData, refinedUsdtToVesData] = await Promise.all([
+            refinedZelleToVesRes.json(),
+            refinedUsdtToVesRes.json()
+          ]);
+
+          const parsedZelleToVes = parseFloat(refinedZelleToVesData.data?.[0]?.adv?.price || "0");
+          if (parsedZelleToVes > 0) binanceZelleToVesRate = parsedZelleToVes;
+
+          const parsedUsdtToVes = parseFloat(refinedUsdtToVesData.data?.[0]?.adv?.price || "0");
+          if (parsedUsdtToVes > 0) binanceRate = parsedUsdtToVes;
+        }
+      } catch (err) {
+        console.error("Error fetching refined Binance rates:", err);
+      }
+
+      // Fetch SaldoAR Rate with safety
+      let saldoRate = 0;
+      try {
+        const saldoRes = await fetch("https://api.saldo.com.ar/v3/systems/zelle/rates", {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(4000)
+        });
+        if (saldoRes.ok) {
+          const saldoData = await saldoRes.json();
+          const rateObj = saldoData.data?.find((r: any) => r.attributes?.system_id === 'banco_ves');
+          const saldoPrice = rateObj?.attributes?.price;
+          
+          if (saldoPrice) {
+            saldoRate = 1 / parseFloat(saldoPrice);
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching SaldoAR rate:", err);
+      }
+
+      // Fetch BCV Rates with absolute timeout
       const bcvRates = await new Promise<{ usd: number; eur: number }>((resolve) => {
         const options = {
           hostname: "www.bcv.org.ve",
@@ -103,13 +210,17 @@ async function startServer() {
           });
         });
         req.on("error", () => resolve({ usd: 0, eur: 0 }));
+        req.setTimeout(3500, () => {
+          req.destroy();
+          resolve({ usd: 0, eur: 0 });
+        });
         req.end();
       });
 
       res.json({
         binanceRate,
         binanceUsdZelleRate,
-        binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceRate : 0,
+        binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceZelleToVesRate : 0,
         saldoRate,
         bcvUsdRate: bcvRates.usd,
         bcvEurRate: bcvRates.eur,

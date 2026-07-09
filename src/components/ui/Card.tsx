@@ -6,7 +6,7 @@ export function Card({ children, className = '' }: { children: React.ReactNode; 
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`bg-white rounded-2xl p-6 shadow-sm border border-gray-100 ${className}`}
+      className={`bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-800 transition-colors duration-200 ${className}`}
     >
       {children}
     </motion.div>
@@ -23,7 +23,7 @@ export function CardHeader({ children, className = '' }: { children: React.React
 
 export function CardTitle({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
-    <h3 className={`font-semibold text-lg tracking-tight text-gray-900 ${className}`}>
+    <h3 className={`font-semibold text-lg tracking-tight text-gray-900 dark:text-white transition-colors duration-200 ${className}`}>
       {children}
     </h3>
   );

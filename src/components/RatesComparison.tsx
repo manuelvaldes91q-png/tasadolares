@@ -18,29 +18,57 @@ export function RatesComparison() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [amount, setAmount] = useState<string>('100');
+  const [debouncedAmount, setDebouncedAmount] = useState<string>('100');
   
-  const fetchRates = async () => {
+  const fetchRates = async (currentAmount?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/rates');
-      if (!res.ok) throw new Error('Failed to fetch rates');
+      const amt = currentAmount || amount || '100';
+      const res = await fetch(`/api/rates?amount=${encodeURIComponent(amt)}`);
+      if (!res.ok) throw new Error('No se pudieron obtener las tasas');
       const result = await res.json();
       setData(result);
     } catch (err: any) {
-      setError(err.message || 'Unknown error occurred');
+      setError(err.message || 'Ocurrió un error desconocido');
     } finally {
       setLoading(false);
     }
   };
 
+  // Debounce the amount input to avoid excessive API requests while typing
   useEffect(() => {
-    fetchRates();
-    
-    // Auto-refresh every 60 seconds
-    const interval = setInterval(fetchRates, 60000);
+    const timer = setTimeout(() => {
+      setDebouncedAmount(amount);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [amount]);
+
+  // Fetch rates when the debounced amount changes
+  useEffect(() => {
+    const parsed = parseFloat(debouncedAmount);
+    if (!isNaN(parsed) && parsed > 0) {
+      fetchRates(debouncedAmount);
+    }
+  }, [debouncedAmount]);
+
+  // Auto-refresh every 60 seconds using the current amount
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const parsed = parseFloat(amount);
+      if (!isNaN(parsed) && parsed > 0) {
+        fetchRates(amount);
+      }
+    }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [amount]);
+
+  const handleRefresh = () => {
+    const parsed = parseFloat(amount);
+    if (!isNaN(parsed) && parsed > 0) {
+      fetchRates(amount);
+    }
+  };
 
   const numAmount = parseFloat(amount) || 0;
   
@@ -67,21 +95,21 @@ export function RatesComparison() {
       {/* Header and Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold text-gray-900 tracking-tight">Real-time Rates</h2>
-          <p className="text-sm text-gray-500 mt-1">Live market data for USDT and Zelle to VES</p>
+          <h2 className="text-2xl font-semibold text-gray-900 dark:text-white tracking-tight transition-colors">Tasas en Tiempo Real</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 transition-colors">Datos de mercado en vivo para USDT y Zelle a bolívares (VES)</p>
         </div>
         <button
-          onClick={fetchRates}
+          onClick={handleRefresh}
           disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-slate-950 text-sm font-medium rounded-lg hover:bg-gray-800 dark:hover:bg-gray-100 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Updating...' : 'Refresh Rates'}
+          {loading ? 'Actualizando...' : 'Actualizar Tasas'}
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-xl flex items-start gap-3 border border-red-100">
+        <div className="bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 p-4 rounded-xl flex items-start gap-3 border border-red-100 dark:border-red-900/50 transition-colors">
           <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
           <p className="text-sm">{error}</p>
         </div>
@@ -93,138 +121,138 @@ export function RatesComparison() {
         {/* Binance Card */}
         <Card className="relative overflow-hidden">
           <CardHeader>
-            <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
               <span className="w-2 h-2 rounded-full bg-[#FCD535]"></span>
               Binance P2P (USDT)
             </div>
             <CardTitle className="text-2xl">
-              {data ? data.binanceRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 font-normal">VES</span>
+              {data ? data.binanceRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
             </CardTitle>
-            <p className="text-xs text-gray-400">1 USDT</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USDT</p>
           </CardHeader>
         </Card>
 
         {/* Binance Zelle to VES Card */}
-        <Card className={`relative overflow-hidden ${isBinanceZelleBetter && data ? 'ring-2 ring-emerald-500 ring-offset-2' : ''}`}>
+        <Card className={`relative overflow-hidden transition-all ${isBinanceZelleBetter && data ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 ring-offset-2 dark:ring-offset-slate-950' : ''}`}>
           {isBinanceZelleBetter && data && (
-            <div className="absolute top-4 right-4 text-emerald-500 flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 px-2.5 py-1 rounded-full">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Best Option
+            <div className="absolute top-4 right-4 text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 rounded-full transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Mejor Opción
             </div>
           )}
           <CardHeader>
-            <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
               <span className="w-2 h-2 rounded-full bg-[#FCD535]"></span>
               Binance P2P (Zelle)
             </div>
             <CardTitle className="text-2xl">
-              {data ? data.binanceZelleToVesRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 font-normal">VES</span>
+              {data ? data.binanceZelleToVesRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
             </CardTitle>
-            <p className="text-xs text-gray-400">1 USD (Zelle)</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USD (Zelle)</p>
           </CardHeader>
         </Card>
 
         {/* SaldoAR Card */}
-        <Card className={`relative overflow-hidden ${isSaldoBetter && data ? 'ring-2 ring-emerald-500 ring-offset-2' : ''}`}>
+        <Card className={`relative overflow-hidden transition-all ${isSaldoBetter && data ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 ring-offset-2 dark:ring-offset-slate-950' : ''}`}>
           {isSaldoBetter && data && (
-            <div className="absolute top-4 right-4 text-emerald-500 flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 px-2.5 py-1 rounded-full">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Best Option
+            <div className="absolute top-4 right-4 text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 rounded-full transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Mejor Opción
             </div>
           )}
           <CardHeader>
-            <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
               <span className="w-2 h-2 rounded-full bg-blue-500"></span>
               SaldoAR
             </div>
             <CardTitle className="text-2xl">
-              {data ? data.saldoRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 font-normal">VES</span>
+              {data ? data.saldoRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
             </CardTitle>
-            <p className="text-xs text-gray-400">1 USD (Zelle)</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USD (Zelle)</p>
           </CardHeader>
         </Card>
         
         {/* BCV USD Card */}
         <Card className="relative overflow-hidden">
           <CardHeader>
-            <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
               <span className="w-2 h-2 rounded-full bg-red-600"></span>
               BCV Oficial
             </div>
             <CardTitle className="text-2xl">
-              {data && data.bcvUsdRate > 0 ? data.bcvUsdRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 font-normal">VES</span>
+              {data && data.bcvUsdRate > 0 ? data.bcvUsdRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
             </CardTitle>
-            <p className="text-xs text-gray-400">1 USD</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USD</p>
           </CardHeader>
         </Card>
 
         {/* BCV EUR Card */}
         <Card className="relative overflow-hidden">
           <CardHeader>
-            <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
               <span className="w-2 h-2 rounded-full bg-blue-800"></span>
               BCV Oficial
             </div>
             <CardTitle className="text-2xl">
-              {data && data.bcvEurRate > 0 ? data.bcvEurRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 font-normal">VES</span>
+              {data && data.bcvEurRate > 0 ? data.bcvEurRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
             </CardTitle>
-            <p className="text-xs text-gray-400">1 EUR</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 EUR</p>
           </CardHeader>
         </Card>
 
       </div>
 
       {/* Calculator Section */}
-      <Card className="bg-gray-50 border-none">
+      <Card className="bg-gray-50 dark:bg-slate-900/40 border border-gray-100 dark:border-slate-800 transition-colors">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <ArrowRightLeft className="w-5 h-5 text-gray-400" />
-            Conversion Calculator
+            <ArrowRightLeft className="text-gray-400 dark:text-gray-500 w-5 h-5 transition-colors" />
+            Calculadora de Conversión
           </CardTitle>
         </CardHeader>
         
         <div className="mt-4">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Amount to Convert (USD / USDT)</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 transition-colors">Monto a Convertir (USD / USDT)</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-              <span className="text-gray-500 font-medium">$</span>
+              <span className="text-gray-500 dark:text-gray-400 font-medium transition-colors">$</span>
             </div>
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="block w-full pl-8 pr-4 py-3 bg-white border border-gray-200 rounded-xl text-lg font-medium text-gray-900 focus:ring-2 focus:ring-gray-900 focus:border-transparent outline-none transition-all"
+              className="block w-full pl-8 pr-4 py-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl text-lg font-medium text-gray-900 dark:text-white focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:border-transparent outline-none transition-all"
               placeholder="0.00"
             />
           </div>
         </div>
 
         <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center">
-            <span className="text-xs font-medium text-gray-500 mb-1">Binance (USDT)</span>
-            <span className="text-lg font-semibold text-gray-900">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Binance (USDT)</span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {binanceReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center">
-            <span className="text-xs font-medium text-gray-500 mb-1">Binance (Zelle)</span>
-            <span className="text-lg font-semibold text-gray-900">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Binance (Zelle)</span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {binanceZelleToVesReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center">
-            <span className="text-xs font-medium text-gray-500 mb-1">Via SaldoAR</span>
-            <span className="text-lg font-semibold text-gray-900">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por SaldoAR</span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {saldoReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center">
-            <span className="text-xs font-medium text-gray-500 mb-1">Via BCV (USD)</span>
-            <span className="text-lg font-semibold text-gray-900">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por BCV (USD)</span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {bcvUsdReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
-          <div className="bg-white p-4 rounded-xl border border-gray-100 flex flex-col justify-center">
-            <span className="text-xs font-medium text-gray-500 mb-1">Via BCV (EUR)</span>
-            <span className="text-lg font-semibold text-gray-900">
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por BCV (EUR)</span>
+            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
               {bcvEurReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
@@ -234,21 +262,21 @@ export function RatesComparison() {
           <motion.div 
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
-            className="mt-6 flex items-start gap-3 bg-indigo-50 text-indigo-800 p-4 rounded-xl"
+            className="mt-6 flex items-start gap-3 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-800 dark:text-indigo-300 p-4 rounded-xl border border-indigo-100 dark:border-indigo-900/30 transition-colors"
           >
             <TrendingUp className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <p className="text-sm leading-relaxed">
-              <strong>Recommendation: </strong> 
-              Using <strong>{isBinanceZelleBetter ? 'Binance P2P (Zelle)' : 'SaldoAR'}</strong> will yield 
-              you <span className="font-semibold">{zelleDifference.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES</span> more 
-              for this transaction compared to the other platform.
+              <strong>Recomendación: </strong> 
+              Usar <strong>{isBinanceZelleBetter ? 'Binance P2P (Zelle)' : 'SaldoAR'}</strong> te dará{' '}
+              <span className="font-semibold">{zelleDifference.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES</span> más{' '}
+              en esta transacción en comparación con la otra plataforma.
             </p>
           </motion.div>
         )}
         
         {data && (
-          <p className="text-center text-xs text-gray-400 mt-6">
-            Last updated: {new Date(data.timestamp).toLocaleTimeString()}
+          <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-6 transition-colors">
+            Última actualización: {new Date(data.timestamp).toLocaleTimeString('es-VE')}
           </p>
         )}
       </Card>
