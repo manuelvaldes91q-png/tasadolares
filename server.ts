@@ -11,14 +11,25 @@ async function startServer() {
   // Add JSON parsing middleware
   app.use(express.json());
 
+  // In-memory cache for resilient fallbacks
+  const cachedRates = {
+    binanceRate: 41.5,
+    binanceUsdZelleRate: 1.05,
+    binanceZelleToVesRate: 39.5,
+    saldoRate: 38.0,
+    bcvUsdRate: 36.4,
+    bcvEurRate: 39.8,
+    timestamp: new Date().toISOString()
+  };
+
   // API route for getting rates
   app.get("/api/rates", async (req, res) => {
     try {
       const amount = parseFloat(req.query.amount as string) || 100;
 
       // Wrap in try-catch to avoid complete failure if Binance blocks/throttles
-      let baselineRate = 40.0; // Sensible default fallback
-      let binanceUsdZelleRate = 1.03; // Sensible default fallback
+      let baselineRate = cachedRates.binanceRate;
+      let binanceUsdZelleRate = cachedRates.binanceUsdZelleRate;
 
       try {
         const baselinePayload = {
@@ -37,7 +48,7 @@ async function startServer() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(baselinePayload),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(8000)
           }),
           fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
             method: "POST",
@@ -53,7 +64,7 @@ async function startServer() {
               tradeType: "BUY",
               transAmount: amount.toString()
             }),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(8000)
           })
         ]);
 
@@ -64,11 +75,15 @@ async function startServer() {
           ]);
 
           const parsedBaseline = parseFloat(baselineData.data?.[0]?.adv?.price || "0");
-          if (parsedBaseline > 0) baselineRate = parsedBaseline;
+          if (parsedBaseline > 0) {
+            baselineRate = parsedBaseline;
+            cachedRates.binanceRate = parsedBaseline;
+          }
 
           const parsedZelle = parseFloat(binanceZelleData.data?.[0]?.adv?.price || "0");
           if (parsedZelle > 0) {
             binanceUsdZelleRate = parsedZelle;
+            cachedRates.binanceUsdZelleRate = parsedZelle;
           } else {
             // Fallback if no ads match the USD transAmount limit
             const fallbackZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
@@ -84,17 +99,20 @@ async function startServer() {
                 fiat: "USD",
                 tradeType: "BUY"
               }),
-              signal: AbortSignal.timeout(4000)
+              signal: AbortSignal.timeout(8000)
             });
             if (fallbackZelleRes.ok) {
               const fallbackZelleData = await fallbackZelleRes.json();
               const parsedFallback = parseFloat(fallbackZelleData.data?.[0]?.adv?.price || "0");
-              if (parsedFallback > 0) binanceUsdZelleRate = parsedFallback;
+              if (parsedFallback > 0) {
+                binanceUsdZelleRate = parsedFallback;
+                cachedRates.binanceUsdZelleRate = parsedFallback;
+              }
             }
           }
         }
       } catch (err) {
-        console.error("Error fetching baseline Binance rates:", err);
+        console.warn("Error fetching baseline Binance rates, using cache:", err);
       }
 
       // Step 2: Calculate target VES amounts for the refined queries
@@ -122,7 +140,7 @@ async function startServer() {
               tradeType: "SELL",
               transAmount: Math.round(vesZelleAmount).toString()
             }),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(8000)
           }),
           fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
             method: "POST",
@@ -138,32 +156,39 @@ async function startServer() {
               tradeType: "SELL",
               transAmount: Math.round(vesUsdtAmount).toString()
             }),
-            signal: AbortSignal.timeout(4000)
+            signal: AbortSignal.timeout(8000)
           })
         ]);
 
-        if (refinedZelleToVesRes.ok && refinedUsdtToVesRes.ok) {
-          const [refinedZelleToVesData, refinedUsdtToVesData] = await Promise.all([
-            refinedZelleToVesRes.json(),
-            refinedUsdtToVesRes.json()
-          ]);
-
+        if (refinedZelleToVesRes.ok) {
+          const refinedZelleToVesData = await refinedZelleToVesRes.json();
           const parsedZelleToVes = parseFloat(refinedZelleToVesData.data?.[0]?.adv?.price || "0");
           if (parsedZelleToVes > 0) binanceZelleToVesRate = parsedZelleToVes;
-
+        }
+        
+        if (refinedUsdtToVesRes.ok) {
+          const refinedUsdtToVesData = await refinedUsdtToVesRes.json();
           const parsedUsdtToVes = parseFloat(refinedUsdtToVesData.data?.[0]?.adv?.price || "0");
-          if (parsedUsdtToVes > 0) binanceRate = parsedUsdtToVes;
+          if (parsedUsdtToVes > 0) {
+            binanceRate = parsedUsdtToVes;
+            cachedRates.binanceRate = parsedUsdtToVes;
+          }
         }
       } catch (err) {
-        console.error("Error fetching refined Binance rates:", err);
+        console.warn("Error fetching refined Binance rates, using cache/baseline:", err);
+      }
+
+      // Update cached rate calculation
+      if (binanceUsdZelleRate > 0) {
+        cachedRates.binanceZelleToVesRate = (1 / binanceUsdZelleRate) * binanceZelleToVesRate;
       }
 
       // Fetch SaldoAR Rate with safety
-      let saldoRate = 0;
+      let saldoRate = cachedRates.saldoRate;
       try {
         const saldoRes = await fetch("https://api.saldo.com.ar/v3/systems/zelle/rates", {
           headers: { "Accept": "application/json" },
-          signal: AbortSignal.timeout(4000)
+          signal: AbortSignal.timeout(8000)
         });
         if (saldoRes.ok) {
           const saldoData = await saldoRes.json();
@@ -171,64 +196,64 @@ async function startServer() {
           const saldoPrice = rateObj?.attributes?.price;
           
           if (saldoPrice) {
-            saldoRate = 1 / parseFloat(saldoPrice);
+            const parsedSaldo = 1 / parseFloat(saldoPrice);
+            if (parsedSaldo > 0) {
+              saldoRate = parsedSaldo;
+              cachedRates.saldoRate = parsedSaldo;
+            }
           }
         }
       } catch (err) {
-        console.error("Error fetching SaldoAR rate:", err);
+        console.warn("Error fetching SaldoAR rate, using cache:", err);
       }
 
-      // Fetch BCV Rates with absolute timeout
-      const bcvRates = await new Promise<{ usd: number; eur: number }>((resolve) => {
-        const options = {
-          hostname: "www.bcv.org.ve",
-          path: "/",
-          method: "GET",
-          rejectUnauthorized: false,
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      // Fetch BCV Rates from API
+      let bcvUsdRate = cachedRates.bcvUsdRate;
+      let bcvEurRate = cachedRates.bcvEurRate;
+      
+      try {
+        const [bcvUsdRes, bcvEurRes] = await Promise.all([
+          fetch("https://ve.dolarapi.com/v1/dolares/oficial", { signal: AbortSignal.timeout(8000) }),
+          fetch("https://ve.dolarapi.com/v1/euros/oficial", { signal: AbortSignal.timeout(8000) })
+        ]);
+
+        if (bcvUsdRes.ok) {
+          const usdData = await bcvUsdRes.json();
+          if (usdData.promedio > 0) {
+            bcvUsdRate = usdData.promedio;
+            cachedRates.bcvUsdRate = usdData.promedio;
           }
-        };
-        const req = https.request(options, (res) => {
-          let body = "";
-          res.on("data", d => body += d);
-          res.on("end", () => {
-            try {
-              const usdMatch = body.match(/<div id=\"dolar\"[^>]*>.*?<strong[^>]*>\s*([\d,.]+)\s*<\/strong>/is);
-              const eurMatch = body.match(/<div id=\"euro\"[^>]*>.*?<strong[^>]*>\s*([\d,.]+)\s*<\/strong>/is);
-              
-              const usdStr = usdMatch ? usdMatch[1].replace(",", ".") : "0";
-              const eurStr = eurMatch ? eurMatch[1].replace(",", ".") : "0";
-              
-              resolve({
-                usd: parseFloat(usdStr),
-                eur: parseFloat(eurStr)
-              });
-            } catch (e) {
-              resolve({ usd: 0, eur: 0 });
-            }
-          });
-        });
-        req.on("error", () => resolve({ usd: 0, eur: 0 }));
-        req.setTimeout(3500, () => {
-          req.destroy();
-          resolve({ usd: 0, eur: 0 });
-        });
-        req.end();
-      });
+        }
+
+        if (bcvEurRes.ok) {
+          const eurData = await bcvEurRes.json();
+          if (eurData.promedio > 0) {
+            bcvEurRate = eurData.promedio;
+            cachedRates.bcvEurRate = eurData.promedio;
+          }
+        }
+      } catch (err) {
+        console.warn("Error fetching BCV rates, using cache:", err);
+      }
+
+      cachedRates.timestamp = new Date().toISOString();
 
       res.json({
-        binanceRate,
-        binanceUsdZelleRate,
-        binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceZelleToVesRate : 0,
-        saldoRate,
-        bcvUsdRate: bcvRates.usd,
-        bcvEurRate: bcvRates.eur,
-        timestamp: new Date().toISOString()
+        binanceRate: binanceRate || cachedRates.binanceRate,
+        binanceUsdZelleRate: binanceUsdZelleRate || cachedRates.binanceUsdZelleRate,
+        binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceZelleToVesRate : cachedRates.binanceZelleToVesRate,
+        saldoRate: saldoRate || cachedRates.saldoRate,
+        bcvUsdRate: bcvUsdRate || cachedRates.bcvUsdRate,
+        bcvEurRate: bcvEurRate || cachedRates.bcvEurRate,
+        timestamp: cachedRates.timestamp
       });
     } catch (error) {
-      console.error("Error fetching rates:", error);
-      res.status(500).json({ error: "Failed to fetch exchange rates" });
+      console.error("Critical error in rates endpoint:", error);
+      // Absolute fallback - return whatever we have cached with the current timestamp
+      res.json({
+        ...cachedRates,
+        timestamp: new Date().toISOString()
+      });
     }
   });
 

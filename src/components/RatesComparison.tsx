@@ -23,17 +23,39 @@ export function RatesComparison() {
   const fetchRates = async (currentAmount?: string) => {
     setLoading(true);
     setError(null);
-    try {
-      const amt = currentAmount || amount || '100';
-      const res = await fetch(`/api/rates?amount=${encodeURIComponent(amt)}`);
-      if (!res.ok) throw new Error('No se pudieron obtener las tasas');
-      const result = await res.json();
-      setData(result);
-    } catch (err: any) {
-      setError(err.message || 'Ocurrió un error desconocido');
-    } finally {
-      setLoading(false);
+    
+    const amt = currentAmount || amount || '100';
+    let success = false;
+    let lastError: any = null;
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(`/api/rates?amount=${encodeURIComponent(amt)}`);
+        if (!res.ok) {
+          throw new Error('No se pudieron obtener las tasas desde el servidor.');
+        }
+        const result = await res.json();
+        setData(result);
+        success = true;
+        break; // Success! Exit loop.
+      } catch (err: any) {
+        lastError = err;
+        if (attempt < 3) {
+          // Wait 1.5 seconds before retrying
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
     }
+    
+    if (!success) {
+      console.error("Error fetching rates on client after 3 attempts:", lastError);
+      const isNetworkError = lastError?.message?.includes('fetch') || lastError?.name === 'TypeError';
+      const msg = isNetworkError 
+        ? 'Error de conexión: No se pudo conectar con el servidor. Por favor, intenta de nuevo haciendo clic en "Actualizar Tasas".'
+        : (lastError?.message || 'Ocurrió un error inesperado al obtener las tasas.');
+      setError(msg);
+    }
+    setLoading(false);
   };
 
   // Debounce the amount input to avoid excessive API requests while typing
