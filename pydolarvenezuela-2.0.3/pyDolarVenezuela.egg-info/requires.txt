@@ -1,0 +1,9 @@
+requests
+curl_cffi
+beautifulsoup4
+babel
+pytz
+colorama
+cachetools
+psycopg2-binary
+sqlalchemy

@@ -19,6 +19,7 @@ async function startServer() {
     saldoRate: 38.0,
     bcvUsdRate: 36.4,
     bcvEurRate: 39.8,
+    bcvLastFetchTime: 0,
     timestamp: new Date().toISOString()
   };
 
@@ -211,29 +212,50 @@ async function startServer() {
       let bcvUsdRate = cachedRates.bcvUsdRate;
       let bcvEurRate = cachedRates.bcvEurRate;
       
-      try {
-        const [bcvUsdRes, bcvEurRes] = await Promise.all([
-          fetch("https://ve.dolarapi.com/v1/dolares/oficial", { signal: AbortSignal.timeout(8000) }),
-          fetch("https://ve.dolarapi.com/v1/euros/oficial", { signal: AbortSignal.timeout(8000) })
-        ]);
-
-        if (bcvUsdRes.ok) {
-          const usdData = await bcvUsdRes.json();
-          if (usdData.promedio > 0) {
-            bcvUsdRate = usdData.promedio;
-            cachedRates.bcvUsdRate = usdData.promedio;
+      const now = Date.now();
+      const FIVE_HOURS = 5 * 60 * 60 * 1000;
+      
+      if (now - cachedRates.bcvLastFetchTime > FIVE_HOURS) {
+        let bcvRates = { usd: 0, eur: 0 };
+        try {
+          const [bcvUsdRes, bcvEurRes] = await Promise.all([
+            fetch("https://exchange.vcoud.com/coins/latest?type=bolivar&base=usd", { signal: AbortSignal.timeout(5000) }),
+            fetch("https://exchange.vcoud.com/coins/latest?type=bolivar&base=eur", { signal: AbortSignal.timeout(5000) })
+          ]);
+          
+          if (bcvUsdRes.ok) {
+            const usdData = await bcvUsdRes.json();
+            const bcvUsdMatch = usdData.find((coin: any) => coin.slug === "dolar-bcv");
+            if (bcvUsdMatch && bcvUsdMatch.price > 0) {
+              bcvRates.usd = bcvUsdMatch.price;
+            }
           }
+          if (bcvEurRes.ok) {
+            const eurData = await bcvEurRes.json();
+            const bcvEurMatch = eurData.find((coin: any) => coin.slug === "euro-bcv");
+            if (bcvEurMatch && bcvEurMatch.price > 0) {
+              bcvRates.eur = bcvEurMatch.price;
+            }
+          }
+        } catch (err) {
+          console.warn("CriptoDolar BCV fetch failed:", err);
         }
 
-        if (bcvEurRes.ok) {
-          const eurData = await bcvEurRes.json();
-          if (eurData.promedio > 0) {
-            bcvEurRate = eurData.promedio;
-            cachedRates.bcvEurRate = eurData.promedio;
-          }
+        if (bcvRates.usd > 0) {
+          bcvUsdRate = bcvRates.usd;
+          cachedRates.bcvUsdRate = bcvRates.usd;
         }
-      } catch (err) {
-        console.warn("Error fetching BCV rates, using cache:", err);
+        if (bcvRates.eur > 0) {
+          bcvEurRate = bcvRates.eur;
+          cachedRates.bcvEurRate = bcvRates.eur;
+        }
+        
+        if (bcvRates.usd > 0 && bcvRates.eur > 0) {
+          cachedRates.bcvLastFetchTime = now;
+        } else {
+          // If both failed, retry in 1 minute instead of waiting 5 hours
+          cachedRates.bcvLastFetchTime = now - FIVE_HOURS + 60000;
+        }
       }
 
       cachedRates.timestamp = new Date().toISOString();
