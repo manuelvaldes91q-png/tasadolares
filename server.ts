@@ -20,6 +20,9 @@ async function startServer() {
     bcvUsdRate: 36.4,
     bcvEurRate: 39.8,
     bcvLastFetchTime: 0,
+    venezuelaExchangesRate: 770.0,
+    venezuelaExchangesPaypalRate: 735.0,
+    venezuelaExchangesCardRate: 735.0,
     timestamp: new Date().toISOString()
   };
 
@@ -208,6 +211,43 @@ async function startServer() {
         console.warn("Error fetching SaldoAR rate, using cache:", err);
       }
 
+      // Fetch Venezuela Exchanges with safety
+      let venezuelaExchangesRate = cachedRates.venezuelaExchangesRate;
+      let venezuelaExchangesPaypalRate = cachedRates.venezuelaExchangesPaypalRate;
+      let venezuelaExchangesCardRate = cachedRates.venezuelaExchangesCardRate;
+      try {
+        const vexRes = await fetch("https://us-central1-venezuela-exchange-527e6.cloudfunctions.net/getlandingdata", {
+          headers: { "Accept": "application/json" },
+          signal: AbortSignal.timeout(8000)
+        });
+        if (vexRes.ok) {
+          const vexData = await vexRes.json();
+          if (vexData.usd) {
+            const parsedVexUsd = parseFloat(vexData.usd.toString().replace(",", "."));
+            if (parsedVexUsd > 0) {
+              venezuelaExchangesRate = parsedVexUsd;
+              cachedRates.venezuelaExchangesRate = parsedVexUsd;
+            }
+          }
+          if (vexData.paypal) {
+            const parsedVexPaypal = parseFloat(vexData.paypal.toString().replace(",", "."));
+            if (parsedVexPaypal > 0) {
+              venezuelaExchangesPaypalRate = parsedVexPaypal;
+              cachedRates.venezuelaExchangesPaypalRate = parsedVexPaypal;
+            }
+          }
+          if (vexData.saldo_tarjeta) {
+            const parsedVexCard = parseFloat(vexData.saldo_tarjeta.toString().replace(",", "."));
+            if (parsedVexCard > 0) {
+              venezuelaExchangesCardRate = parsedVexCard;
+              cachedRates.venezuelaExchangesCardRate = parsedVexCard;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Error fetching Venezuela Exchanges rate, using cache:", err);
+      }
+
       // Fetch BCV Rates from API
       let bcvUsdRate = cachedRates.bcvUsdRate;
       let bcvEurRate = cachedRates.bcvEurRate;
@@ -267,6 +307,9 @@ async function startServer() {
         saldoRate: saldoRate || cachedRates.saldoRate,
         bcvUsdRate: bcvUsdRate || cachedRates.bcvUsdRate,
         bcvEurRate: bcvEurRate || cachedRates.bcvEurRate,
+        venezuelaExchangesRate: venezuelaExchangesRate || cachedRates.venezuelaExchangesRate,
+        venezuelaExchangesPaypalRate: venezuelaExchangesPaypalRate || cachedRates.venezuelaExchangesPaypalRate,
+        venezuelaExchangesCardRate: venezuelaExchangesCardRate || cachedRates.venezuelaExchangesCardRate,
         timestamp: cachedRates.timestamp
       });
     } catch (error) {

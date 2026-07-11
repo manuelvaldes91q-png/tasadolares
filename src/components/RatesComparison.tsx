@@ -10,6 +10,9 @@ interface RatesData {
   saldoRate: number;
   bcvUsdRate: number;
   bcvEurRate: number;
+  venezuelaExchangesRate?: number;
+  venezuelaExchangesPaypalRate?: number;
+  venezuelaExchangesCardRate?: number;
   timestamp: string;
 }
 
@@ -97,6 +100,7 @@ export function RatesComparison() {
   const binanceReceived = numAmount * (data?.binanceRate || 0);
   const binanceZelleToVesReceived = numAmount * (data?.binanceZelleToVesRate || 0);
   const saldoReceived = numAmount * (data?.saldoRate || 0);
+  const venezuelaExchangesReceived = numAmount * (data?.venezuelaExchangesRate || 0);
   
   const bcvUsdReceived = numAmount * (data?.bcvUsdRate || 0);
   const bcvEurReceived = numAmount * (data?.bcvEurRate || 0);
@@ -104,12 +108,34 @@ export function RatesComparison() {
   // Calculate which option is best between the Zelle->VES options
   const bestZelleRate = Math.max(
     data?.binanceZelleToVesRate || 0,
-    data?.saldoRate || 0
+    data?.saldoRate || 0,
+    data?.venezuelaExchangesRate || 0
   );
   
   const isBinanceZelleBetter = bestZelleRate === data?.binanceZelleToVesRate && data?.binanceZelleToVesRate > 0;
   const isSaldoBetter = bestZelleRate === data?.saldoRate && data?.saldoRate > 0;
-  const zelleDifference = Math.abs(binanceZelleToVesReceived - saldoReceived);
+  const isVenezuelaExchangesBetter = bestZelleRate === data?.venezuelaExchangesRate && (data?.venezuelaExchangesRate || 0) > 0;
+
+  // Get dynamic recommendation text
+  let recommendationText = '';
+  if (data && numAmount > 0) {
+    const options = [
+      { name: 'Binance P2P (Zelle)', amount: binanceZelleToVesReceived, rate: data.binanceZelleToVesRate },
+      { name: 'SaldoAR', amount: saldoReceived, rate: data.saldoRate },
+      { name: 'Venezuela Exchanges', amount: venezuelaExchangesReceived, rate: data.venezuelaExchangesRate || 0 }
+    ].filter(opt => opt.rate > 0);
+
+    options.sort((a, b) => b.amount - a.amount);
+    
+    if (options.length >= 2) {
+      const best = options[0];
+      const second = options[1];
+      const diff = best.amount - second.amount;
+      recommendationText = `Usar ${best.name} te dará ${diff.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES más en esta transacción en comparación con ${second.name}.`;
+    } else if (options.length === 1) {
+      recommendationText = `La única opción de Zelle disponible es ${options[0].name}.`;
+    }
+  }
   
   return (
     <div className="w-full max-w-4xl mx-auto space-y-6">
@@ -191,6 +217,25 @@ export function RatesComparison() {
             <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USD (Zelle)</p>
           </CardHeader>
         </Card>
+
+        {/* Venezuela Exchanges Card */}
+        <Card className={`relative overflow-hidden transition-all ${isVenezuelaExchangesBetter && data ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 ring-offset-2 dark:ring-offset-slate-950' : ''}`}>
+          {isVenezuelaExchangesBetter && data && (
+            <div className="absolute top-4 right-4 text-emerald-500 dark:text-emerald-400 flex items-center gap-1.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 rounded-full transition-colors">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Mejor Opción
+            </div>
+          )}
+          <CardHeader>
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-xs mb-1 transition-colors">
+              <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+              Venezuela Exchanges (Zelle)
+            </div>
+            <CardTitle className="text-2xl">
+              {data && data.venezuelaExchangesRate ? data.venezuelaExchangesRate.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'} <span className="text-sm text-gray-500 dark:text-gray-400 font-normal transition-colors">VES</span>
+            </CardTitle>
+            <p className="text-xs text-gray-400 dark:text-gray-500 transition-colors">1 USD (Zelle)</p>
+          </CardHeader>
+        </Card>
         
         {/* BCV USD Card */}
         <Card className="relative overflow-hidden">
@@ -247,40 +292,46 @@ export function RatesComparison() {
           </div>
         </div>
 
-        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="mt-8 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Binance (USDT)</span>
-            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
               {binanceReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Binance (Zelle)</span>
-            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
               {binanceZelleToVesReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por SaldoAR</span>
-            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">SaldoAR (Zelle)</span>
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
               {saldoReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
+            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">VenezuelaEx (Zelle)</span>
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
+              {venezuelaExchangesReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
+            </span>
+          </div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por BCV (USD)</span>
-            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
               {bcvUsdReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-100 dark:border-slate-700 flex flex-col justify-center transition-colors">
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1 transition-colors">Por BCV (EUR)</span>
-            <span className="text-lg font-semibold text-gray-900 dark:text-white transition-colors">
+            <span className="text-base font-semibold text-gray-900 dark:text-white transition-colors sm:text-lg">
               {bcvEurReceived.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES
             </span>
           </div>
         </div>
 
-        {data && numAmount > 0 && (
+        {data && numAmount > 0 && recommendationText && (
           <motion.div 
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
@@ -289,9 +340,7 @@ export function RatesComparison() {
             <TrendingUp className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <p className="text-sm leading-relaxed">
               <strong>Recomendación: </strong> 
-              Usar <strong>{isBinanceZelleBetter ? 'Binance P2P (Zelle)' : 'SaldoAR'}</strong> te dará{' '}
-              <span className="font-semibold">{zelleDifference.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} VES</span> más{' '}
-              en esta transacción en comparación con la otra plataforma.
+              {recommendationText}
             </p>
           </motion.div>
         )}
