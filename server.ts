@@ -13,12 +13,14 @@ async function startServer() {
 
   // In-memory cache for resilient fallbacks
   const cachedRates = {
-    binanceRate: 41.5,
-    binanceUsdZelleRate: 1.05,
-    binanceZelleToVesRate: 39.5,
-    saldoRate: 38.0,
-    bcvUsdRate: 36.4,
-    bcvEurRate: 39.8,
+    binanceRate: 721.35,
+    binanceBuyRate: 721.35, // Compra (user buys USDT, advertiser sells: SELL)
+    binanceSellRate: 709.69, // Venta (user sells USDT, advertiser buys: BUY)
+    binanceUsdZelleRate: 1.039,
+    binanceZelleToVesRate: 792.58,
+    saldoRate: 783.66,
+    bcvUsdRate: 721.35,
+    bcvEurRate: 823.64,
     bcvLastFetchTime: 0,
     venezuelaExchangesRate: 770.0,
     venezuelaExchangesPaypalRate: 735.0,
@@ -26,34 +28,31 @@ async function startServer() {
     timestamp: new Date().toISOString()
   };
 
+  // Health check endpoint for keep-alive services
+  app.get("/api/health", (req, res) => {
+    res.status(200).send("OK");
+  });
+
   // API route for getting rates
   app.get("/api/rates", async (req, res) => {
     try {
       const amount = parseFloat(req.query.amount as string) || 100;
 
       // Wrap in try-catch to avoid complete failure if Binance blocks/throttles
-      let baselineRate = cachedRates.binanceRate;
       let binanceUsdZelleRate = cachedRates.binanceUsdZelleRate;
+      let binanceBuyRate = cachedRates.binanceBuyRate;
+      let binanceSellRate = cachedRates.binanceSellRate;
+
+      // Calculate target VES amounts for the refined queries using cached baseline rates
+      const currentUsdRate = cachedRates.binanceBuyRate || 720;
+      const vesUsdtAmount = amount * currentUsdRate;
+      const vesZelleAmount = (amount / (cachedRates.binanceUsdZelleRate || 1.04)) * currentUsdRate;
+
+      let binanceZelleToVesRate = currentUsdRate;
 
       try {
-        const baselinePayload = {
-          page: 1,
-          rows: 5,
-          payTypes: [],
-          countries: [],
-          publisherType: null,
-          asset: "USDT",
-          fiat: "VES",
-          tradeType: "SELL"
-        };
-
-        const [baselineRes, binanceZelleRes] = await Promise.all([
-          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(baselinePayload),
-            signal: AbortSignal.timeout(8000)
-          }),
+        const [binanceZelleRes, binanceBuyRes, binanceSellRes, refinedZelleToVesRes] = await Promise.all([
+          // Zelle USD -> USDT (tradeType: BUY, asset: USDT, fiat: USD)
           fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -69,83 +68,8 @@ async function startServer() {
               transAmount: amount.toString()
             }),
             signal: AbortSignal.timeout(8000)
-          })
-        ]);
-
-        if (baselineRes.ok && binanceZelleRes.ok) {
-          const [baselineData, binanceZelleData] = await Promise.all([
-            baselineRes.json(),
-            binanceZelleRes.json()
-          ]);
-
-          const parsedBaseline = parseFloat(baselineData.data?.[0]?.adv?.price || "0");
-          if (parsedBaseline > 0) {
-            baselineRate = parsedBaseline;
-            cachedRates.binanceRate = parsedBaseline;
-          }
-
-          const parsedZelle = parseFloat(binanceZelleData.data?.[0]?.adv?.price || "0");
-          if (parsedZelle > 0) {
-            binanceUsdZelleRate = parsedZelle;
-            cachedRates.binanceUsdZelleRate = parsedZelle;
-          } else {
-            // Fallback if no ads match the USD transAmount limit
-            const fallbackZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                page: 1,
-                rows: 5,
-                payTypes: ["Zelle"],
-                countries: [],
-                publisherType: null,
-                asset: "USDT",
-                fiat: "USD",
-                tradeType: "BUY"
-              }),
-              signal: AbortSignal.timeout(8000)
-            });
-            if (fallbackZelleRes.ok) {
-              const fallbackZelleData = await fallbackZelleRes.json();
-              const parsedFallback = parseFloat(fallbackZelleData.data?.[0]?.adv?.price || "0");
-              if (parsedFallback > 0) {
-                binanceUsdZelleRate = parsedFallback;
-                cachedRates.binanceUsdZelleRate = parsedFallback;
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("Error fetching baseline Binance rates, using cache:", err);
-      }
-
-      // Step 2: Calculate target VES amounts for the refined queries
-      const usdtZelleAmount = amount / (binanceUsdZelleRate || 1);
-      const vesZelleAmount = usdtZelleAmount * (baselineRate || 40);
-      const vesUsdtAmount = amount * (baselineRate || 40);
-
-      let binanceZelleToVesRate = baselineRate;
-      let binanceRate = baselineRate;
-
-      try {
-        // Step 3: Fetch refined USDT -> VES rates for both paths using calculated VES amounts
-        const [refinedZelleToVesRes, refinedUsdtToVesRes] = await Promise.all([
-          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              page: 1,
-              rows: 5,
-              payTypes: [],
-              countries: [],
-              publisherType: null,
-              asset: "USDT",
-              fiat: "VES",
-              tradeType: "SELL",
-              transAmount: Math.round(vesZelleAmount).toString()
-            }),
-            signal: AbortSignal.timeout(8000)
           }),
+          // Compra de USDT (user pays VES, receives USDT -> advertiser tradeType: SELL)
           fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -161,25 +85,157 @@ async function startServer() {
               transAmount: Math.round(vesUsdtAmount).toString()
             }),
             signal: AbortSignal.timeout(8000)
+          }),
+          // Venta de USDT (user sells USDT, receives VES -> advertiser tradeType: BUY)
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: 1,
+              rows: 5,
+              payTypes: [],
+              countries: [],
+              publisherType: null,
+              asset: "USDT",
+              fiat: "VES",
+              tradeType: "BUY",
+              transAmount: Math.round(vesUsdtAmount).toString()
+            }),
+            signal: AbortSignal.timeout(8000)
+          }),
+          // Zelle to VES path (refined Zelle to VES -> advertiser tradeType: SELL)
+          fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              page: 1,
+              rows: 5,
+              payTypes: [],
+              countries: [],
+              publisherType: null,
+              asset: "USDT",
+              fiat: "VES",
+              tradeType: "SELL",
+              transAmount: Math.round(vesZelleAmount).toString()
+            }),
+            signal: AbortSignal.timeout(8000)
           })
         ]);
 
+        if (binanceZelleRes.ok) {
+          const zelleData = await binanceZelleRes.json();
+          const parsedZelle = parseFloat(zelleData.data?.[0]?.adv?.price || "0");
+          if (parsedZelle > 0) {
+            binanceUsdZelleRate = parsedZelle;
+            cachedRates.binanceUsdZelleRate = parsedZelle;
+          } else {
+            // Fallback without amount constraint
+            const fallbackZelleRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                page: 1,
+                rows: 5,
+                payTypes: ["Zelle"],
+                countries: [],
+                publisherType: null,
+                asset: "USDT",
+                fiat: "USD",
+                tradeType: "BUY"
+              }),
+              signal: AbortSignal.timeout(5000)
+            });
+            if (fallbackZelleRes.ok) {
+              const fallbackZelleData = await fallbackZelleRes.json();
+              const parsedFallback = parseFloat(fallbackZelleData.data?.[0]?.adv?.price || "0");
+              if (parsedFallback > 0) {
+                binanceUsdZelleRate = parsedFallback;
+                cachedRates.binanceUsdZelleRate = parsedFallback;
+              }
+            }
+          }
+        }
+
+        if (binanceBuyRes.ok) {
+          const buyData = await binanceBuyRes.json();
+          const parsedBuy = parseFloat(buyData.data?.[0]?.adv?.price || "0");
+          if (parsedBuy > 0) {
+            binanceBuyRate = parsedBuy;
+            cachedRates.binanceBuyRate = parsedBuy;
+            cachedRates.binanceRate = parsedBuy; // update legacy
+          } else {
+            // Fallback without amount constraint
+            const fallbackBuyRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                page: 1,
+                rows: 5,
+                payTypes: [],
+                countries: [],
+                publisherType: null,
+                asset: "USDT",
+                fiat: "VES",
+                tradeType: "SELL"
+              }),
+              signal: AbortSignal.timeout(5000)
+            });
+            if (fallbackBuyRes.ok) {
+              const fallbackBuyData = await fallbackBuyRes.json();
+              const parsedFallback = parseFloat(fallbackBuyData.data?.[0]?.adv?.price || "0");
+              if (parsedFallback > 0) {
+                binanceBuyRate = parsedFallback;
+                cachedRates.binanceBuyRate = parsedFallback;
+                cachedRates.binanceRate = parsedFallback;
+              }
+            }
+          }
+        }
+
+        if (binanceSellRes.ok) {
+          const sellData = await binanceSellRes.json();
+          const parsedSell = parseFloat(sellData.data?.[0]?.adv?.price || "0");
+          if (parsedSell > 0) {
+            binanceSellRate = parsedSell;
+            cachedRates.binanceSellRate = parsedSell;
+          } else {
+            // Fallback without amount constraint
+            const fallbackSellRes = await fetch("https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                page: 1,
+                rows: 5,
+                payTypes: [],
+                countries: [],
+                publisherType: null,
+                asset: "USDT",
+                fiat: "VES",
+                tradeType: "BUY"
+              }),
+              signal: AbortSignal.timeout(5000)
+            });
+            if (fallbackSellRes.ok) {
+              const fallbackSellData = await fallbackSellRes.json();
+              const parsedFallback = parseFloat(fallbackSellData.data?.[0]?.adv?.price || "0");
+              if (parsedFallback > 0) {
+                binanceSellRate = parsedFallback;
+                cachedRates.binanceSellRate = parsedFallback;
+              }
+            }
+          }
+        }
+
+        binanceZelleToVesRate = binanceBuyRate; // default
         if (refinedZelleToVesRes.ok) {
           const refinedZelleToVesData = await refinedZelleToVesRes.json();
           const parsedZelleToVes = parseFloat(refinedZelleToVesData.data?.[0]?.adv?.price || "0");
-          if (parsedZelleToVes > 0) binanceZelleToVesRate = parsedZelleToVes;
-        }
-        
-        if (refinedUsdtToVesRes.ok) {
-          const refinedUsdtToVesData = await refinedUsdtToVesRes.json();
-          const parsedUsdtToVes = parseFloat(refinedUsdtToVesData.data?.[0]?.adv?.price || "0");
-          if (parsedUsdtToVes > 0) {
-            binanceRate = parsedUsdtToVes;
-            cachedRates.binanceRate = parsedUsdtToVes;
+          if (parsedZelleToVes > 0) {
+            binanceZelleToVesRate = parsedZelleToVes;
           }
         }
       } catch (err) {
-        console.warn("Error fetching refined Binance rates, using cache/baseline:", err);
+        console.warn("Error fetching Binance rates, using cache:", err);
       }
 
       // Update cached rate calculation
@@ -301,7 +357,9 @@ async function startServer() {
       cachedRates.timestamp = new Date().toISOString();
 
       res.json({
-        binanceRate: binanceRate || cachedRates.binanceRate,
+        binanceRate: binanceBuyRate || cachedRates.binanceBuyRate,
+        binanceBuyRate: binanceBuyRate || cachedRates.binanceBuyRate,
+        binanceSellRate: binanceSellRate || cachedRates.binanceSellRate,
         binanceUsdZelleRate: binanceUsdZelleRate || cachedRates.binanceUsdZelleRate,
         binanceZelleToVesRate: binanceUsdZelleRate > 0 ? (1 / binanceUsdZelleRate) * binanceZelleToVesRate : cachedRates.binanceZelleToVesRate,
         saldoRate: saldoRate || cachedRates.saldoRate,
